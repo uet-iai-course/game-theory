@@ -402,8 +402,9 @@ function buildStrategyFromUI(){
       const actor = past.querySelector('.past-actor').value;
       const action = past.querySelector('.past-action').value;
       const count = past.querySelector('.past-count').value;
+      const roundCount = node.querySelector('.round-count').value;
       const thenAction = node.querySelector('.then-action').value;
-      rules.push({type:'ifthen', condition:{type:'past', past:{actor, action, count}}, then:{action:thenAction}});
+      rules.push({type:'ifthen', condition:{type:'past', past:{actor, action, count}, roundCount:parseInt(roundCount)||1}, then:{action:thenAction}});
     } else if(kind === 'ifthen2'){
       const past1 = node.querySelector('.cond-past-1');
       const actor1 = past1.querySelector('.past-actor').value;
@@ -413,6 +414,7 @@ function buildStrategyFromUI(){
       const actor2 = past2.querySelector('.past-actor').value;
       const action2 = past2.querySelector('.past-action').value;
       const count2 = past2.querySelector('.past-count').value;
+      const roundCount = node.querySelector('.round-count').value;
       const thenAction = node.querySelector('.then-action').value;
       rules.push({
         type:'ifthen',
@@ -421,7 +423,8 @@ function buildStrategyFromUI(){
           clauses:[
             {type:'past', past:{actor:actor1, action:action1, count:count1}},
             {type:'past', past:{actor:actor2, action:action2, count:count2}}
-          ]
+          ],
+          roundCount:parseInt(roundCount)||1
         },
         then:{action:thenAction}
       });
@@ -443,20 +446,24 @@ $('addIfThen2Rule').addEventListener('click', ()=>{
       <div class="font-medium">If → Then rule (2 past clauses)</div>
       <button class="text-xs text-slate-500 remove-rule">Remove</button>
     </div>
-    <div class="mt-2">
-      <div class="text-xs text-slate-500">Condition (two Past clauses, AND)</div>
-      <div class="mt-2 grid grid-cols-1 gap-3">
-        <div class="cond-past-1 grid grid-cols-3 gap-2">
-          <select class="past-actor border rounded px-2 py-1"><option value="you">you</option><option value="opponent">opponent</option></select>
-          <select class="past-action border rounded px-2 py-1"><option value="cooperated">cooperated</option><option value="cheated">cheated</option></select>
-          <input class="past-count border rounded px-2 py-1" placeholder="n or all" value="1" />
+      <div class="mt-2">
+        <div class="text-xs text-slate-500">Condition (two Past clauses, AND)</div>
+        <div class="mt-2 grid grid-cols-1 gap-3">
+          <div class="cond-past-1 grid grid-cols-3 gap-2">
+            <select class="past-actor border rounded px-2 py-1"><option value="you">you</option><option value="opponent">opponent</option></select>
+            <select class="past-action border rounded px-2 py-1"><option value="cooperated">cooperated</option><option value="cheated">cheated</option></select>
+            <input class="past-count border rounded px-2 py-1" placeholder="n or all" value="1" />
+          </div>
+          <div class="cond-past-2 grid grid-cols-3 gap-2">
+            <select class="past-actor border rounded px-2 py-1"><option value="you">you</option><option value="opponent">opponent</option></select>
+            <select class="past-action border rounded px-2 py-1"><option value="cooperated">cooperated</option><option value="cheated">cheated</option></select>
+            <input class="past-count border rounded px-2 py-1" placeholder="n or all" value="1" />
+          </div>
         </div>
-        <div class="cond-past-2 grid grid-cols-3 gap-2">
-          <select class="past-actor border rounded px-2 py-1"><option value="you">you</option><option value="opponent">opponent</option></select>
-          <select class="past-action border rounded px-2 py-1"><option value="cooperated">cooperated</option><option value="cheated">cheated</option></select>
-          <input class="past-count border rounded px-2 py-1" placeholder="n or all" value="1" />
+        <div class="mt-2">
+          <label class="block text-xs text-slate-500">Round count (evaluate in past N rounds)</label>
+          <input class="round-count border rounded px-2 py-1 w-20" placeholder="N" value="1" />
         </div>
-      </div>
 
       <div class="mt-3">
         <div class="text-xs text-slate-500">Then (action)</div>
@@ -480,13 +487,17 @@ $('addIfThenRule').addEventListener('click', ()=>{
       <div class="font-medium">If → Then rule (single past clause)</div>
       <button class="text-xs text-slate-500 remove-rule">Remove</button>
     </div>
-    <div class="mt-2">
-      <div class="text-xs text-slate-500">Condition (one Past clause)</div>
-      <div class="mt-2 cond-past grid grid-cols-3 gap-2">
-        <select class="past-actor border rounded px-2 py-1"><option value="you">you</option><option value="opponent">opponent</option></select>
-        <select class="past-action border rounded px-2 py-1"><option value="cooperated">cooperated</option><option value="cheated">cheated</option></select>
-        <input class="past-count border rounded px-2 py-1" placeholder="n or all" value="1" />
-      </div>
+      <div class="mt-2">
+        <div class="text-xs text-slate-500">Condition (one Past clause)</div>
+        <div class="mt-2 cond-past grid grid-cols-3 gap-2">
+          <select class="past-actor border rounded px-2 py-1"><option value="you">you</option><option value="opponent">opponent</option></select>
+          <select class="past-action border rounded px-2 py-1"><option value="cooperated">cooperated</option><option value="cheated">cheated</option></select>
+          <input class="past-count border rounded px-2 py-1" placeholder="n or all" value="1" />
+        </div>
+        <div class="mt-2">
+          <label class="block text-xs text-slate-500">Round count (evaluate in past N rounds)</label>
+          <input class="round-count border rounded px-2 py-1 w-20" placeholder="N" value="1" />
+        </div>
 
       <div class="mt-3">
         <div class="text-xs text-slate-500">Then (action)</div>
@@ -522,45 +533,59 @@ function runTournament(){
   // ensure scores & hist
   players.forEach(p => { p.score = 0; p.strategy._hist = {}; });
 
-  function decideAction(strategy, meId, oppId){
+  function decideAction(strategy, meId, oppId, roundInEpoch){
     const hist = (strategy._hist[oppId] || []);
-    // evaluate rules top->bottom
+    
+    // first move of each round always uses initial action
+    if(roundInEpoch === 0){
+      return strategy.initial || 'cooperate';
+    }
+    
+    // evaluate rules top->bottom, if any rule matches, use its action
     for(const rule of strategy.rules || []){
       if(rule.type === 'ifthen'){
         if(evaluateIfThen(rule, hist)){
           return rule.then.action === 'random' ? (Math.random() < 0.5 ? 'cooperate' : 'cheat') : rule.then.action;
         }
       }
-      // 'past' rules by themselves don't map directly to an action in this engine
     }
+    // only use initial action if no rules match
     return strategy.initial || 'cooperate';
   }
 
   function evaluateIfThen(rule, history){
     const c = rule.condition;
     if(!c) return false;
+    
+    // get round count to limit evaluation window
+    const roundCount = c.roundCount || 1;
+    const relevantHistory = history.slice(-roundCount);
+    
     if(c.type === 'past'){
-      return evaluatePastCondition(c.past, history);
+      return evaluatePastCondition(c.past, relevantHistory);
     }
     if(c.type === 'and' && Array.isArray(c.clauses) && c.clauses.length === 2){
-      return c.clauses.every(cl => cl.type === 'past' && evaluatePastCondition(cl.past, history));
+      return c.clauses.every(cl => cl.type === 'past' && evaluatePastCondition(cl.past, relevantHistory));
     }
     return false;
   }
 
   function evaluatePastCondition(p, history){
     if(!p) return false;
-    const cnt = (p.count === 'all') ? history.length : (parseInt(p.count) || 0);
-    if(cnt === 0) return false;
-    const slice = (p.count === 'all') ? history : history.slice(-cnt);
-    if(!Array.isArray(slice) || slice.length === 0) return false;
-    for(const h of slice){
+    if(!Array.isArray(history) || history.length === 0) return false;
+    
+    // count how many times the actor performed the specified action in relevantHistory
+    let matchCount = 0;
+    for(const h of history){
       const actorAction = (p.actor === 'you') ? h.me : h.opp;
-      if(!((p.action === 'cooperated' && actorAction === 'cooperate') || (p.action === 'cheated' && actorAction === 'cheat'))){
-        return false;
+      if((p.action === 'cooperated' && actorAction === 'cooperate') || (p.action === 'cheated' && actorAction === 'cheat')){
+        matchCount++;
       }
     }
-    return true;
+    
+    // check if match count meets the requirement
+    const requiredCount = (p.count === 'all') ? history.length : (parseInt(p.count) || 0);
+    return matchCount >= requiredCount;
   }
 
   // reset logs
@@ -579,8 +604,8 @@ function runTournament(){
         const histAB = A.strategy._hist[B.peerId] = A.strategy._hist[B.peerId] || [];
         const histBA = B.strategy._hist[A.peerId] = B.strategy._hist[A.peerId] || [];
         for(let r=0;r<ROUNDS_PER_EPOCH;r++){
-          const aAct = decideAction(A.strategy, A.peerId, B.peerId);
-          const bAct = decideAction(B.strategy, B.peerId, A.peerId);
+          const aAct = decideAction(A.strategy, A.peerId, B.peerId, r);
+          const bAct = decideAction(B.strategy, B.peerId, A.peerId, r);
           histAB.push({me: aAct, opp: bAct});
           histBA.push({me: bAct, opp: aAct});
           // payoff
