@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UETHoot — P2P Quiz (PeerJS, no server)</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+
+  <style>
+    body { background: linear-gradient(180deg,#fef3c7,#e0e7ff); }
+    .card { background: white; border-radius: 1rem; padding: 1rem; box-shadow: 0 8px 24px rgba(2,6,23,0.08); }
+    .pill { border-radius: 999px; }
+    .btn { transition: transform .15s ease, box-shadow .15s ease; }
+    .btn:active { transform: scale(0.98); }
+    .kahoot-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+    .opt { display:flex; align-items:center; gap:.5rem; padding:1rem; border-radius:.75rem; color:white; font-weight:600; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.12); transition: transform .15s ease, filter .15s ease; }
+    .opt:hover { transform: translateY(-2px); filter: brightness(1.05); }
+    .opt.disabled { pointer-events: none; filter: grayscale(.2) opacity(.8); }
+    .opt.locked { pointer-events: none; } /* khóa click nhưng không mờ */
+    .optA { background:#ef4444; }  /* red */
+    .optB { background:#3b82f6; }  /* blue */
+    .optC { background:#10b981; }  /* green */
+    .optD { background:#f59e0b; }  /* yellow */
+    .countdown-ring { width: 88px; height: 88px; border-radius: 50%; background: conic-gradient(#22c55e var(--pct,0%), #e5e7eb 0%); display:flex; align-items:center; justify-content:center; font-weight:800; }
+    .pop { animation: pop .35s ease; }
+    @keyframes pop { 0%{transform:scale(.92)} 60%{transform:scale(1.04)} 100%{transform:scale(1)} }
+    .slide-up { animation: slideUp .35s ease; }
+    @keyframes slideUp { 0%{transform:translateY(8px);opacity:0} 100%{transform:translateY(0);opacity:1} }
+    .glow-select { outline: 3px solid rgba(255,255,255,0.85); outline-offset: -3px; }
+    .glow-correct { box-shadow: 0 0 0 4px rgba(16,185,129,0.9) inset, 0 6px 18px rgba(16,185,129,0.35); }
+    .glow-wrong { box-shadow: 0 0 0 4px rgba(239,68,68,0.9) inset, 0 6px 18px rgba(239,68,68,0.35); }
+    .dim { opacity: .35; filter: grayscale(.25); }
+  </style>
+</head>
+<body class="min-h-screen font-sans text-slate-800">
+
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-3xl font-extrabold">UETHoot — P2P Quiz</h1>
+      <p class="text-sm text-slate-600 mt-1">Kahoot-style quiz chạy ngang hàng bằng PeerJS. Không cần server.</p>
+    </header>
+
+    <!-- Role selection -->
+    <div id="roleSelection" class="grid grid-cols-2 gap-6 mb-6">
+      <button id="beLeader" class="card hover:scale-[1.01] transition-transform flex flex-col items-start gap-2">
+        <h2 class="text-xl font-semibold">Leader</h2>
+        <p class="text-slate-500">Tạo phòng, soạn câu hỏi (UI/JSON), bắt đầu quiz, xem/tải leaderboard.</p>
+      </button>
+      <button id="bePlayer" class="card hover:scale-[1.01] transition-transform flex flex-col items-start gap-2">
+        <h2 class="text-xl font-semibold">Player</h2>
+        <p class="text-slate-500">Nhập tên, tham gia phòng, chọn đáp án trong 30 giây.</p>
+      </button>
+    </div>
+
+    <!-- Leader UI -->
+    <div id="leaderUI" class="hidden card">
+      <div class="flex flex-wrap gap-4 items-start">
+        <div class="flex-1 min-w-[280px]">
+          <label class="block text-sm font-medium">Leader display name</label>
+          <input id="leaderName" class="mt-1 block w-full border rounded px-3 py-2" placeholder="Your name (leader)" />
+        </div>
+        <div class="w-48">
+          <button id="createRoomBtn" class="mt-6 w-full bg-indigo-600 text-white py-2 rounded btn">Create room</button>
+        </div>
+      </div>
+
+      <div id="roomInfo" class="mt-4 bg-slate-50 rounded p-4 border">
+        <div><strong>Room ID:</strong> <span id="roomId">—</span></div>
+        <div class="text-sm text-slate-500 mt-1">Người chơi nhập ID này để tham gia phòng của bạn.</div>
+      </div>
+
+      <div class="mt-6 grid md:grid-cols-2 gap-6">
+        <!-- Quiz editor -->
+        <div>
+          <h3 class="text-lg font-semibold">Soạn quiz</h3>
+          <div class="mt-2 grid md:grid-cols-2 gap-2 items-end">
+            <div>
+              <label class="block text-xs text-slate-500">Tiêu đề quiz (tùy chọn)</label>
+              <input id="quizTitleInput" class="mt-1 block w-full border rounded px-2 py-1" placeholder="UETHoot Quiz" />
+            </div>
+            <div class="flex gap-2 justify-end">
+              <button id="addQuestionBtn" class="px-3 py-1 border rounded btn">Thêm câu hỏi</button>
+              <button id="importJSONBtn" class="px-3 py-1 border rounded btn">Nhập JSON</button>
+              <button id="exportJSONBtn" class="px-3 py-1 border rounded btn">Xuất JSON</button>
+            </div>
+          </div>
+          <div id="quizList" class="mt-3 space-y-3"></div>
+          <details class="mt-3">
+            <summary class="cursor-pointer text-sm text-slate-600">Schema JSON</summary>
+            <pre class="mt-2 p-3 bg-gray-50 rounded text-xs overflow-auto">{
+  "title": "Quiz Title (optional)",
+  "questions": [
+    {
+      "text": "Câu hỏi?",
+      "options": ["A...","B...","C...","D..."],
+      "answerIndex": 1,
+      "durationSec": 45
+    }
+  ]
+}</pre>
+          </details>
+          <div class="mt-3">
+            <label class="block text-sm font-medium">JSON Editor (đồng bộ 2 chiều)</label>
+            <textarea id="quizJsonEditor" class="mt-1 w-full border rounded p-2 font-mono text-xs min-h-[200px]" placeholder="{\n  &quot;title&quot;: &quot;...&quot;,\n  &quot;questions&quot;: [ ... ]\n}"></textarea>
+            <div id="jsonEditorError" class="text-xs text-rose-600 mt-1 hidden"></div>
+          </div>
+        </div>
+
+        <!-- Leaderboard + control -->
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="text-lg font-semibold">Điều khiển & Leaderboard</h3>
+            <div class="flex gap-2 items-center">
+              <label class="flex items-center gap-2 text-sm text-slate-600"><input id="autoNextToggle" type="checkbox" class="accent-emerald-600" checked /> Auto next (3s)</label>
+              <button id="startQuizBtn" class="bg-emerald-500 text-white px-3 py-1 rounded btn disabled:opacity-50" disabled>Start</button>
+              <button id="nextQuestionBtn" class="px-3 py-1 border rounded btn hidden">Next question</button>
+              <button id="downloadLeaderboardBtn" class="px-3 py-1 border rounded btn">Download leaderboard</button>
+              <button id="viewStatsBtn" class="px-3 py-1 border rounded btn">View stats</button>
+            </div>
+          </div>
+          <div id="leaderBoard" class="mt-3 grid gap-2">
+            <div class="p-4 text-slate-500">Chưa có người chơi.</div>
+          </div>
+          <div class="mt-4 hidden" id="leaderQuestionArea">
+            <div class="flex items-center gap-4">
+              <div class="countdown-ring" id="leaderCountdown"><span id="leaderCountdownText">30</span></div>
+              <div class="text-lg font-semibold" id="leaderQText">—</div>
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-2" id="leaderQOptions"></div>
+            <div class="mt-2 text-xs text-slate-500" id="leaderAnsweredInfo"></div>
+          </div>
+          <div class="mt-4 hidden" id="leaderStatsArea">
+            <h4 class="font-semibold">Thống kê theo từng câu</h4>
+            <div id="leaderStatsList" class="mt-2 grid gap-2"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Player UI -->
+    <div id="playerUI" class="hidden card">
+      <div class="grid md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium">Tên hiển thị</label>
+          <input id="playerName" class="mt-1 block w-full border rounded px-3 py-2" placeholder="Tên của bạn" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium">Room ID</label>
+          <input id="playerRoomId" class="mt-1 block w-full border rounded px-3 py-2" placeholder="Dán Room ID" />
+        </div>
+        <div class="flex items-end">
+          <button id="joinRoomBtn" class="w-full bg-indigo-600 text-white py-2 rounded btn">Join room</button>
+        </div>
+      </div>
+
+      <div id="playerRoomInfo" class="mt-4 bg-slate-50 rounded p-4 border hidden">
+        <div><strong>Đang kết nối tới:</strong> <span id="playerConnectedRoom">—</span></div>
+        <div class="text-sm text-slate-500 mt-1">Trạng thái: <span id="playerStatus">Not connected</span></div>
+      </div>
+
+      <div class="mt-6">
+        <div id="playerQuestionArea" class="hidden">
+          <div class="flex items-center gap-4">
+            <div class="countdown-ring" id="playerCountdown"><span id="playerCountdownText">30</span></div>
+            <div>
+              <div class="text-lg font-semibold" id="playerQText">—</div>
+              <div class="text-xs text-slate-500" id="playerQIndex">—</div>
+            </div>
+          </div>
+          <div class="mt-4 kahoot-grid" id="playerQOptions"></div>
+          <div class="mt-2 text-xs text-slate-500" id="playerAnswerNote">Chọn một đáp án. Bạn càng nhanh điểm càng cao!</div>
+        </div>
+
+        <div id="playerLeaderboard" class="hidden mt-6 card">
+          <h4 class="font-semibold">Leaderboard</h4>
+          <div id="playerLeaderboardList" class="mt-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="mt-6 text-sm text-slate-500">Prototype — Tailwind + PeerJS. Mở file trong nhiều cửa sổ: một Leader, các Player.</footer>
+  </div>
+
+<script>
+// ============================
+//   App state & utilities
+// ============================
+let role = null; // 'leader' | 'player'
+let peer = null;
+let myPeerId = null;
+let leaderPeerId = null;
+let connections = {}; // leader: peerId -> DataConnection; player: leader only
+let playersInfo = {};  // leader: peerId -> { name, score, joinedAt, hasAnswered }
+let quiz = { title: 'UETHoot Quiz', questions: [] };
+let locked = false; // locked when quiz started
+let quizRunning = false;
+let currentQuestionIndex = -1;
+let perQuestionAnswers = {}; // qIndex -> { peerId: { answerIndex, timeMs } }
+let leaderboardCache = []; // for download
+const QUESTION_TIME_SEC = 30;
+let countdownIv = null; // interval handle for synchronized countdown
+let currentDeadlineMs = null; // shared deadline for current question
+let currentDurationSec = QUESTION_TIME_SEC;
+// Player local state for reveal/highlight
+let playerSelectedIndex = null;
+let playerCurrentQIndex = -1;
+
+const $ = id => document.getElementById(id);
+function escapeHtml(s){ if(!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function nowMs(){ return Date.now(); }
+
+// ============================
+//   Role selection & Peer init
+// ============================
+$('beLeader').addEventListener('click', ()=>{
+  role = 'leader';
+  $('roleSelection').classList.add('hidden');
+  $('leaderUI').classList.remove('hidden');
+  initPeer();
+});
+$('bePlayer').addEventListener('click', ()=>{
+  role = 'player';
+  $('roleSelection').classList.add('hidden');
+  $('playerUI').classList.remove('hidden');
+  initPeer();
+});
+
+function initPeer(){
+  peer = new Peer();
+  peer.on('open', id => {
+    myPeerId = id;
+    if(role==='leader'){
+      $('roomId').textContent = id;
+      $('createRoomBtn').disabled = true; // PeerJS đã tạo id
+      $('startQuizBtn').disabled = false;
+    } else {
+      $('playerStatus').textContent = 'Ready (peer id '+id+')';
+    }
+  });
+
+  peer.on('connection', conn => {
+    if(role !== 'leader') { conn.on('open', ()=> conn.close()); return; }
+    const pid = conn.peer;
+    connections[pid] = conn;
+    playersInfo[pid] = playersInfo[pid] || { name: 'Player '+(Object.keys(playersInfo).length+1), score: 0, joinedAt: nowMs(), hasAnswered: false };
+
+    conn.on('data', raw => {
+      let data = raw; if(typeof raw === 'string'){ try{ data = JSON.parse(raw); }catch(e){} }
+      handleIncomingFromPlayer(pid, data);
+    });
+    conn.on('close', ()=>{
+      delete connections[pid];
+      delete playersInfo[pid];
+      broadcastLeaderboard();
+      renderLeaderBoard();
+    });
+    // chào hỏi
+    conn.send(JSON.stringify({type:'request-hello'}));
+    renderLeaderBoard();
+  });
+}
+
+// ============================
+//   Leader: handle player messages
+// ============================
+function handleIncomingFromPlayer(peerId, data){
+  if(!data || !data.type) return;
+  if(data.type === 'hello'){
+    if(locked){
+      if(connections[peerId]) connections[peerId].send(JSON.stringify({type:'error', message:'Quiz đã bắt đầu — không thể tham gia'}));
+      return;
+    }
+    playersInfo[peerId] = Object.assign(playersInfo[peerId]||{}, { name: data.name });
+    renderLeaderBoard();
+    broadcastLeaderboard();
+    // gửi quiz info sơ bộ
+    if(connections[peerId]) connections[peerId].send(JSON.stringify({type:'quiz-info', title: quiz.title, total: quiz.questions.length}));
+  }
+  if(data.type === 'answer'){
+    if(!quizRunning) return;
+    const qIdx = data.qIndex;
+    if(qIdx !== currentQuestionIndex) return;
+    perQuestionAnswers[qIdx] = perQuestionAnswers[qIdx] || {};
+    // nếu đã trả lời bỏ qua
+    if(perQuestionAnswers[qIdx][peerId]) return;
+    perQuestionAnswers[qIdx][peerId] = { answerIndex: data.answerIndex, timeMs: data.timeMs };
+    playersInfo[peerId].hasAnswered = true;
+    updateLeaderAnsweredInfo();
+  }
+}
+
+// ============================
+//   Leader UI actions
+// ============================
+$('createRoomBtn').addEventListener('click', ()=>{ if(!peer) initPeer(); });
+
+$('startQuizBtn').addEventListener('click', ()=>{
+  if(role!=='leader') return;
+  if(quiz.questions.length === 0){ alert('Chưa có câu hỏi'); return; }
+  if(Object.keys(connections).length < 1){ if(!confirm('Chưa có người chơi. Bắt đầu vẫn tiếp tục?')) return; }
+  locked = true;
+  quizRunning = true;
+  currentQuestionIndex = -1;
+  leaderboardCache = [];
+  // reset điểm
+  Object.keys(playersInfo).forEach(pid=>{ playersInfo[pid].score = 0; playersInfo[pid].hasAnswered = false; });
+  broadcast({ type:'quiz-start', title: quiz.title, total: quiz.questions.length });
+  renderLeaderBoard();
+  runQuizLoop();
+});
+
+$('downloadLeaderboardBtn').addEventListener('click', ()=>{
+  const list = Object.keys(playersInfo).map(pid=>({ name: playersInfo[pid].name, score: playersInfo[pid].score }));
+  list.sort((a,b)=> (b.score||0) - (a.score||0));
+  const header = 'Name,Score\n';
+  const csv = header + list.map(r=>`"${(r.name||'').replace(/"/g,'""')}",${r.score}`).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='leaderboard.csv'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },0);
+});
+
+// View stats toggle
+$('viewStatsBtn').addEventListener('click', ()=>{
+  const area = $('leaderStatsArea');
+  const showing = !area.classList.contains('hidden');
+  if(showing){ area.classList.add('hidden'); return; }
+  renderLeaderStats();
+  area.classList.remove('hidden');
+});
+
+// ============================
+//   Leaderboard render & broadcast
+// ============================
+function renderLeaderBoard(){
+  const el = $('leaderBoard');
+  el.innerHTML = '';
+  const players = Object.keys(playersInfo).map(pid=>({ peerId: pid, name: playersInfo[pid].name, score: playersInfo[pid].score||0, joinedAt: playersInfo[pid].joinedAt }));
+  players.sort((a,b)=> (b.score||0) - (a.score||0));
+  players.forEach((p,idx)=>{
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between p-3 bg-white rounded-lg shadow-sm slide-up';
+    row.innerHTML = `
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center font-semibold text-indigo-700">${idx+1}</div>
+        <div>
+          <div class="font-medium">${escapeHtml(p.name||'Player')}</div>
+          <div class="text-xs text-slate-500">Peer: ${escapeHtml(p.peerId||'')}</div>
+        </div>
+      </div>
+      <div class="text-right">
+        <div class="text-lg font-semibold">${p.score}</div>
+        <div class="text-xs text-slate-400">points</div>
+      </div>
+    `;
+    el.appendChild(row);
+  });
+  if(players.length===0){ el.innerHTML = '<div class="p-4 text-slate-500">Chưa có người chơi.</div>'; }
+  broadcastLeaderboard();
+}
+
+function broadcastLeaderboard(){
+  const payload = { type:'leaderboard', data: Object.keys(playersInfo).map(pid=>({ name: playersInfo[pid].name, score: playersInfo[pid].score||0 })) };
+  broadcast(payload);
+}
+
+function broadcast(msg){
+  for(const pid in connections){ try{ connections[pid].send(JSON.stringify(msg)); }catch(e){} }
+}
+
+// ============================
+//   Quiz editor (Leader)
+// ============================
+function addQuestionUI(q){
+  const idx = quiz.questions.length;
+  const wrapper = document.createElement('div'); wrapper.className = 'p-3 border rounded bg-white/60'; wrapper.dataset.idx = String(idx);
+  wrapper.innerHTML = `
+    <div class="flex items-center justify-between">
+      <div class="font-medium flex items-center gap-2">Câu hỏi #${idx+1} <span class="text-[11px] text-slate-500 pill px-2 bg-slate-100">student-friendly</span></div>
+      <button class="text-xs text-slate-500 remove-q">Remove</button>
+    </div>
+    <div class="mt-2 grid gap-2">
+      <input class="q-text border rounded px-3 py-2" placeholder="Nhập nội dung câu hỏi (ngắn gọn, rõ ràng)" value="${escapeHtml(q?.text||'')}" />
+      <div class="grid md:grid-cols-2 gap-2">
+        <input class="q-opt-0 border rounded px-3 py-2" placeholder="Đáp án A" value="${escapeHtml(q?.options?.[0]||'')}" />
+        <input class="q-opt-1 border rounded px-3 py-2" placeholder="Đáp án B" value="${escapeHtml(q?.options?.[1]||'')}" />
+        <input class="q-opt-2 border rounded px-3 py-2" placeholder="Đáp án C" value="${escapeHtml(q?.options?.[2]||'')}" />
+        <input class="q-opt-3 border rounded px-3 py-2" placeholder="Đáp án D" value="${escapeHtml(q?.options?.[3]||'')}" />
+      </div>
+      <div class="grid md:grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs text-slate-500">Đáp án đúng</label>
+          <select class="q-ans border rounded px-3 py-2">
+            <option value="0">A</option>
+            <option value="1">B</option>
+            <option value="2">C</option>
+            <option value="3">D</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Thời lượng (giây, mặc định 30)</label>
+          <input class="q-dur border rounded px-3 py-2 w-full" type="number" min="5" max="300" placeholder="30" value="${escapeHtml(String(q?.durationSec||''))}" />
+        </div>
+      </div>
+    </div>
+  `;
+  const sel = wrapper.querySelector('.q-ans'); sel.value = String(q?.answerIndex ?? 0);
+  wrapper.querySelector('.remove-q').addEventListener('click', ()=>{ wrapper.remove(); rebuildQuizFromUI(); });
+  wrapper.querySelectorAll('input,select').forEach(inp=> inp.addEventListener('input', rebuildQuizFromUI));
+  $('quizList').appendChild(wrapper);
+}
+
+function rebuildQuizFromUI(){
+  const nodes = Array.from(document.querySelectorAll('#quizList > div.p-3'));
+  quiz.questions = nodes.map(node=>{
+    const text = node.querySelector('.q-text').value;
+    const options = [0,1,2,3].map(i=> node.querySelector(`.q-opt-${i}`).value);
+    const answerIndex = parseInt(node.querySelector('.q-ans').value)||0;
+    const dur = parseInt(node.querySelector('.q-dur')?.value || '') || 30;
+    return { text, options, answerIndex, durationSec: dur };
+  });
+  renderLeaderBoard();
+  refreshJsonEditorFromState();
+}
+
+$('addQuestionBtn').addEventListener('click', ()=>{ addQuestionUI({ text:'', options:['','','',''], answerIndex:0 }); rebuildQuizFromUI(); });
+
+$('importJSONBtn').addEventListener('click', ()=>{
+  const s = prompt('Dán JSON quiz'); if(!s) return;
+  try{
+    const obj = JSON.parse(s);
+    if(!obj || !Array.isArray(obj.questions)) throw new Error('Sai schema');
+    quiz = { title: obj.title || 'UETHoot Quiz', questions: obj.questions.map(q=>({ text:q.text||'', options:(q.options||['','','','']).slice(0,4), answerIndex: parseInt(q.answerIndex)||0, durationSec: parseInt(q.durationSec)||30 })) };
+    $('quizList').innerHTML = '';
+    quiz.questions.forEach(q=> addQuestionUI(q));
+    renderLeaderBoard();
+    syncQuizTitleInput();
+    refreshJsonEditorFromState();
+  }catch(e){ alert('JSON không hợp lệ'); }
+});
+
+$('exportJSONBtn').addEventListener('click', ()=>{
+  rebuildQuizFromUI();
+  const s = JSON.stringify(quiz, null, 2);
+  const blob = new Blob([s], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='quiz.json'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },0);
+});
+
+// Title input sync
+function syncQuizTitleInput(){ $('quizTitleInput').value = quiz.title || 'UETHoot Quiz'; }
+$('quizTitleInput').addEventListener('input', ()=>{ quiz.title = $('quizTitleInput').value || 'UETHoot Quiz'; refreshJsonEditorFromState(); });
+
+// JSON editor 2-way sync
+const quizJsonEditor = $('quizJsonEditor');
+const jsonEditorError = $('jsonEditorError');
+function refreshJsonEditorFromState(){
+  try{
+    const s = JSON.stringify(quiz, null, 2);
+    if(quizJsonEditor.value !== s) quizJsonEditor.value = s;
+    jsonEditorError.classList.add('hidden');
+    jsonEditorError.textContent = '';
+  }catch(e){ /* ignore */ }
+}
+quizJsonEditor.addEventListener('input', ()=>{
+  const s = quizJsonEditor.value;
+  try{
+    const obj = JSON.parse(s);
+    if(!obj || !Array.isArray(obj.questions)) throw new Error('Sai schema: thiếu questions');
+    quiz = { title: obj.title || 'UETHoot Quiz', questions: obj.questions.map(q=>({ text:q.text||'', options:(q.options||['','','','']).slice(0,4), answerIndex: parseInt(q.answerIndex)||0, durationSec: parseInt(q.durationSec)||30 })) };
+    $('quizList').innerHTML = '';
+    quiz.questions.forEach(q=> addQuestionUI(q));
+    syncQuizTitleInput();
+    renderLeaderBoard();
+    jsonEditorError.classList.add('hidden');
+    jsonEditorError.textContent = '';
+  }catch(e){
+    jsonEditorError.classList.remove('hidden');
+    jsonEditorError.textContent = 'JSON không hợp lệ: ' + (e.message||e.toString());
+  }
+});
+
+// Initialize title + JSON editor on load
+syncQuizTitleInput();
+refreshJsonEditorFromState();
+
+// ============================
+//   Quiz loop (Leader)
+// ============================
+async function runQuizLoop(){
+  for(let i=0;i<quiz.questions.length;i++){
+    currentQuestionIndex = i;
+    Object.keys(playersInfo).forEach(pid=> playersInfo[pid].hasAnswered = false);
+    perQuestionAnswers[i] = {};
+    showLeaderQuestion(i);
+    // plan a synchronized start a little in the future to mitigate latency
+    const durationSec = Math.max(5, parseInt(quiz.questions[i].durationSec)||QUESTION_TIME_SEC);
+    const startAtMs = nowMs() + 500; // 0.5s delay for sync
+    currentDurationSec = durationSec;
+    currentDeadlineMs = startAtMs + durationSec * 1000;
+    startSynchronizedCountdown(currentDeadlineMs, durationSec);
+    broadcast({ type:'question', qIndex: i, text: quiz.questions[i].text, options: quiz.questions[i].options, total: quiz.questions.length, durationSec, startAtMs });
+    // wait until deadline
+    const waitMs = Math.max(0, currentDeadlineMs - nowMs());
+    await sleep(waitMs);
+    // scoring
+    const elapsed = durationSec * 1000; // full window elapsed
+    scoreQuestion(i, elapsed);
+    // reveal correct answer to all players
+    broadcast({ type:'reveal', qIndex: i, correctIndex: quiz.questions[i].answerIndex });
+    renderLeaderBoard();
+    // chờ chuyển câu: theo tùy chọn autoNext 3s hoặc chờ nút Next
+    const autoNext = $('autoNextToggle').checked;
+    if(autoNext){
+      await sleep(3000);
+    } else {
+      await waitForNextClick();
+    }
+  }
+  quizRunning = false;
+  broadcast({ type:'quiz-end' });
+  alert('Quiz đã kết thúc!');
+}
+
+function scoreQuestion(qIdx, elapsedMs){
+  const q = quiz.questions[qIdx];
+  const answers = perQuestionAnswers[qIdx] || {};
+  const dur = (parseInt(q.durationSec)||QUESTION_TIME_SEC) * 1000;
+  Object.keys(playersInfo).forEach(pid=>{
+    const rec = answers[pid];
+    if(rec && typeof rec.answerIndex === 'number'){
+      const correct = rec.answerIndex === q.answerIndex;
+      if(correct){
+        const timeBonus = Math.max(0, dur - rec.timeMs);
+        const base = 1000; // đúng câu: 1000
+        const bonus = Math.floor(timeBonus / 100); // càng nhanh càng nhiều
+        playersInfo[pid].score += base + bonus;
+      }
+    }
+  });
+  // build stats item for this question
+  buildQuestionStats(qIdx);
+}
+
+function buildQuestionStats(qIdx){
+  const q = quiz.questions[qIdx];
+  const answers = perQuestionAnswers[qIdx] || {};
+  const totalPlayers = Object.keys(playersInfo).length;
+  const map = [0,0,0,0];
+  let correctCount = 0;
+  Object.keys(answers).forEach(pid=>{
+    const a = answers[pid];
+    if(typeof a.answerIndex === 'number'){ map[a.answerIndex] = (map[a.answerIndex]||0) + 1; }
+    if(a.answerIndex === q.answerIndex) correctCount++;
+  });
+  if(!Array.isArray(quiz._stats)) quiz._stats = [];
+  quiz._stats[qIdx] = { counts: map, correctIndex: q.answerIndex, correctCount, totalPlayers };
+}
+
+function renderLeaderStats(){
+  const list = $('leaderStatsList'); if(!list) return;
+  list.innerHTML = '';
+  if(!Array.isArray(quiz._stats)) return;
+  quiz._stats.forEach((st, i)=>{
+    if(!st) return;
+    const q = quiz.questions[i];
+    const box = document.createElement('div');
+    box.className = 'p-3 bg-white rounded shadow-sm';
+    const bars = st.counts.map((c, idx)=>{
+      const pct = st.totalPlayers ? Math.round((c / st.totalPlayers) * 100) : 0;
+      const color = ['#ef4444','#3b82f6','#10b981','#f59e0b'][idx];
+      const label = ['A','B','C','D'][idx];
+      const isCorrect = idx === st.correctIndex;
+      return `<div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-full flex items-center justify-center text-white font-semibold" style="background:${color}">${label}</div>
+        <div class="flex-1 h-3 rounded bg-gray-100 overflow-hidden"><div class="h-3" style="width:${pct}%; background:${color}; opacity:${isCorrect?1:0.6}"></div></div>
+        <div class="w-10 text-right text-sm">${c}</div>
+        <div class="w-10 text-right text-xs text-slate-500">${pct}%</div>
+      </div>`;
+    }).join('');
+    box.innerHTML = `<div class="font-medium mb-2">Câu ${i+1}: ${escapeHtml(q.text||'')}</div>${bars}<div class="mt-1 text-xs text-slate-500">Đúng: ${st.correctCount}/${st.totalPlayers}</div>`;
+    list.appendChild(box);
+  });
+}
+
+function showLeaderQuestion(i){
+  const area = $('leaderQuestionArea');
+  area.classList.remove('hidden');
+  $('leaderQText').textContent = quiz.questions[i].text || '';
+  const opts = quiz.questions[i].options || [];
+  const mapColor = ['optA','optB','optC','optD'];
+  const cont = $('leaderQOptions'); cont.innerHTML='';
+  opts.forEach((t, idx)=>{
+    const d = document.createElement('div');
+    d.className = `opt ${mapColor[idx]} locked`;
+    d.innerHTML = `<div class="pill bg-white/20 px-2">${['A','B','C','D'][idx]}</div><div>${escapeHtml(t||'')}</div>`;
+    cont.appendChild(d);
+  });
+  updateLeaderAnsweredInfo();
+}
+
+function updateLeaderAnsweredInfo(){
+  const answers = perQuestionAnswers[currentQuestionIndex] || {};
+  const totalPlayers = Object.keys(playersInfo).length;
+  const answered = Object.keys(answers).length;
+  $('leaderAnsweredInfo').textContent = `Đã trả lời: ${answered}/${totalPlayers}`;
+}
+
+function waitForNextClick(){
+  return new Promise(resolve=>{
+    const btn = $('nextQuestionBtn');
+    btn.classList.remove('hidden');
+    const handler = ()=>{ btn.removeEventListener('click', handler); btn.classList.add('hidden'); resolve(); };
+    btn.addEventListener('click', handler);
+  });
+}
+
+function updateCountdownRings(remaining){
+  const base = currentDurationSec || QUESTION_TIME_SEC;
+  const pct = Math.max(0, Math.min(1, remaining/base));
+  const deg = Math.floor(pct * 360);
+  const lc = $('leaderCountdown'); if(lc){ lc.style.setProperty('--pct', deg+'%'); $('leaderCountdownText').textContent = String(Math.ceil(remaining)); }
+  const pc = $('playerCountdown'); if(pc){ pc.style.setProperty('--pct', deg+'%'); $('playerCountdownText').textContent = String(Math.ceil(remaining)); }
+}
+
+function countdown(totalSec, onTick, onDone){
+  return new Promise(res=>{
+    let remaining = totalSec;
+    onTick?.(remaining);
+    const iv = setInterval(()=>{
+      remaining -= 1;
+      onTick?.(remaining);
+      if(remaining <= 0){ clearInterval(iv); onDone?.(); res(); }
+    }, 1000);
+  });
+}
+
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+function startSynchronizedCountdown(deadlineMs, durationSec){
+  if(countdownIv) { clearInterval(countdownIv); countdownIv = null; }
+  currentDeadlineMs = deadlineMs;
+  currentDurationSec = durationSec;
+  const tick = ()=>{
+    const remainingSec = Math.max(0, Math.ceil((deadlineMs - nowMs()) / 1000));
+    updateCountdownRings(remainingSec);
+    if(remainingSec <= 0){ clearInterval(countdownIv); countdownIv = null; }
+  };
+  tick();
+  countdownIv = setInterval(tick, 250);
+}
+
+// ============================
+//   Player flow
+// ============================
+$('joinRoomBtn').addEventListener('click', ()=>{
+  const rid = $('playerRoomId').value.trim();
+  const name = $('playerName').value.trim() || 'Player';
+  if(!rid){ alert('Nhập Room ID'); return; }
+  leaderPeerId = rid;
+  const conn = peer.connect(leaderPeerId);
+  conn.on('open', ()=>{
+    $('playerRoomInfo').classList.remove('hidden');
+    $('playerConnectedRoom').textContent = leaderPeerId;
+    $('playerStatus').textContent = 'Connected';
+    connections[leaderPeerId] = conn;
+    conn.send(JSON.stringify({type:'hello', name}));
+    conn.on('data', d=>{
+      let msg=d; try{ if(typeof d==='string') msg=JSON.parse(d); }catch(e){}
+      handleIncomingFromLeader(msg);
+    });
+  });
+  conn.on('close', ()=>{ $('playerStatus').textContent = 'Disconnected'; });
+});
+
+function handleIncomingFromLeader(msg){
+  if(!msg || !msg.type) return;
+  if(msg.type === 'error'){ alert('Leader: '+msg.message); }
+  if(msg.type === 'quiz-info'){ $('playerStatus').textContent = `Đang chờ bắt đầu — ${msg.total||0} câu`; }
+  if(msg.type === 'leaderboard'){ renderPlayerLeaderboard(msg.data); }
+  if(msg.type === 'quiz-start'){
+    $('playerStatus').textContent = 'Quiz bắt đầu!';
+    $('playerLeaderboard').classList.remove('hidden');
+  }
+  if(msg.type === 'question'){
+    renderPlayerQuestion(msg);
+  }
+  if(msg.type === 'reveal'){
+    revealCorrectOnPlayer(msg);
+  }
+  if(msg.type === 'quiz-end'){
+    $('playerStatus').textContent = 'Quiz đã kết thúc';
+    $('playerQuestionArea').classList.add('hidden');
+  }
+}
+
+function renderPlayerLeaderboard(list){
+  const container = $('playerLeaderboardList');
+  container.innerHTML = '';
+  const arr = (list||[]).slice().sort((a,b)=> (b.score||0) - (a.score||0));
+  arr.forEach((p,idx)=>{
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between p-2 bg-white rounded mb-1 pop';
+    row.innerHTML = `<div class="flex items-center gap-2"><div class="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-semibold">${idx+1}</div><div>${escapeHtml(p.name||'')}</div></div><div class="font-semibold">${p.score||0}</div>`;
+    container.appendChild(row);
+  });
+}
+
+function renderPlayerQuestion(payload){
+  const { qIndex, text, options, total, durationSec, startAtMs } = payload;
+  const area = $('playerQuestionArea'); area.classList.remove('hidden');
+  $('playerQText').textContent = text || '';
+  $('playerQIndex').textContent = `Câu ${qIndex+1}/${total}`;
+  const mapColor = ['optA','optB','optC','optD'];
+  const cont = $('playerQOptions'); cont.innerHTML='';
+  const deadlineMs = (startAtMs||nowMs()) + (durationSec||QUESTION_TIME_SEC)*1000;
+  startSynchronizedCountdown(deadlineMs, durationSec||QUESTION_TIME_SEC);
+  playerSelectedIndex = null;
+  playerCurrentQIndex = qIndex;
+  options.forEach((t, idx)=>{
+    const d = document.createElement('div');
+    d.className = `opt ${mapColor[idx]} pop`;
+    d.innerHTML = `<div class="pill bg-white/20 px-2">${['A','B','C','D'][idx]}</div><div>${escapeHtml(t||'')}</div>`;
+    d.addEventListener('click', ()=>{
+      // send answer once
+      if(playerSelectedIndex !== null) return;
+      playerSelectedIndex = idx;
+      highlightSelection(cont, idx);
+      disableOptions();
+      dimUnselected(cont, idx);
+      const elapsed = Math.max(0, nowMs() - (startAtMs||nowMs())); // ms
+      const conn = connections[leaderPeerId];
+      if(conn && conn.open) conn.send(JSON.stringify({type:'answer', qIndex, answerIndex: idx, timeMs: elapsed}));
+      $('playerAnswerNote').textContent = 'Đã chọn đáp án. Chờ câu tiếp theo...';
+    });
+    cont.appendChild(d);
+  });
+  function disableOptions(){ cont.querySelectorAll('.opt').forEach(x=> x.classList.add('locked')); }
+  function dimUnselected(container, idx){ container.querySelectorAll('.opt').forEach((n,i)=>{ if(i!==idx) n.classList.add('dim'); }); }
+}
+
+function highlightSelection(container, idx){
+  container.querySelectorAll('.opt').forEach((node, i)=>{
+    if(i===idx) node.classList.add('glow-select'); else node.classList.remove('glow-select');
+  });
+}
+
+function revealCorrectOnPlayer(payload){
+  const { qIndex, correctIndex } = payload;
+  if(qIndex !== playerCurrentQIndex) return;
+  const cont = $('playerQOptions'); if(!cont) return;
+  const nodes = Array.from(cont.querySelectorAll('.opt'));
+  nodes.forEach((node, i)=>{
+    if(i === correctIndex){ node.classList.add('glow-correct'); node.classList.remove('dim'); }
+    else if(i !== playerSelectedIndex){ node.classList.add('dim'); }
+  });
+  if(playerSelectedIndex !== null && playerSelectedIndex !== correctIndex){
+    const wrongNode = nodes[playerSelectedIndex];
+    if(wrongNode){ wrongNode.classList.add('glow-wrong'); setTimeout(()=>{ wrongNode.classList.remove('glow-wrong'); }, 2000); }
+  }
+  if(playerSelectedIndex !== null && playerSelectedIndex === correctIndex){ launchConfetti(2400); }
+}
+
+function launchConfetti(durationMs){
+  const canvas = document.createElement('canvas');
+  canvas.style.position = 'fixed';
+  canvas.style.left = '0';
+  canvas.style.top = '0';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.pointerEvents = 'none';
+  canvas.style.zIndex = '9999';
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  function resize(){ canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr; }
+  resize();
+  const colors = ['#ef4444','#3b82f6','#10b981','#f59e0b','#a78bfa','#f472b6'];
+  const particles = Array.from({length: 160}, ()=>({
+    x: Math.random()*canvas.width,
+    y: -20 * dpr,
+    w: (6+Math.random()*8)*dpr,
+    h: (10+Math.random()*14)*dpr,
+    vx: (-1+Math.random()*2)*dpr,
+    vy: (2+Math.random()*4)*dpr,
+    rot: Math.random()*Math.PI,
+    vr: (-0.2+Math.random()*0.4),
+    color: colors[Math.floor(Math.random()*colors.length)]
+  }));
+  const start = performance.now();
+  let rafId;
+  function frame(t){
+    const elapsed = t - start;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    particles.forEach(p=>{
+      p.x += p.vx; p.y += p.vy; p.vy += 0.05*dpr; p.rot += p.vr;
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+      ctx.restore();
+    });
+    if(elapsed < durationMs){ rafId = requestAnimationFrame(frame); } else { cancelAnimationFrame(rafId); canvas.remove(); }
+  }
+  rafId = requestAnimationFrame(frame);
+}
+
+</script>
+</body>
+</html>
+
+
