@@ -34,6 +34,22 @@
     .glow-correct { box-shadow: 0 0 0 4px rgba(16,185,129,0.9) inset, 0 6px 18px rgba(16,185,129,0.35); }
     .glow-wrong { box-shadow: 0 0 0 4px rgba(239,68,68,0.9) inset, 0 6px 18px rgba(239,68,68,0.35); }
     .dim { opacity: .35; filter: grayscale(.25); }
+    /* Responsive tweaks */
+    @media (max-width: 640px){
+      .countdown-ring { width: 72px; height: 72px; font-size: 0.9rem; }
+      .card { padding: .875rem; }
+      .btn { padding: .75rem 1rem; font-size: 1rem; }
+      .opt { padding: 1.1rem; }
+      .pill { font-size: .8rem; }
+    }
+    @media (max-width: 480px){
+      .countdown-ring { width: 64px; height: 64px; font-size: 0.85rem; }
+      .opt { padding: 1rem; }
+    }
+    /* Make kahoot-grid single column on small screens */
+    @media (max-width: 640px){
+      .kahoot-grid { grid-template-columns: 1fr; gap: 10px; }
+    }
   </style>
 </head>
 <body class="min-h-screen font-sans text-slate-800">
@@ -45,7 +61,7 @@
     </header>
 
     <!-- Role selection -->
-    <div id="roleSelection" class="grid grid-cols-2 gap-6 mb-6">
+    <div id="roleSelection" class="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-6">
       <button id="beLeader" class="card hover:scale-[1.01] transition-transform flex flex-col items-start gap-2">
         <h2 class="text-xl font-semibold">Leader</h2>
         <p class="text-slate-500">Tạo phòng, soạn câu hỏi (UI/JSON), bắt đầu quiz, xem/tải leaderboard.</p>
@@ -73,11 +89,11 @@
         <div class="text-sm text-slate-500 mt-1">Người chơi nhập ID này để tham gia phòng của bạn.</div>
       </div>
 
-      <div class="mt-6 grid md:grid-cols-2 gap-6">
+      <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
         <!-- Quiz editor -->
         <div>
           <h3 class="text-lg font-semibold">Soạn quiz</h3>
-          <div class="mt-2 grid md:grid-cols-2 gap-2 items-end">
+          <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
             <div>
               <label class="block text-xs text-slate-500">Tiêu đề quiz (tùy chọn)</label>
               <input id="quizTitleInput" class="mt-1 block w-full border rounded px-2 py-1" placeholder="UETHoot Quiz" />
@@ -143,10 +159,11 @@
 
     <!-- Player UI -->
     <div id="playerUI" class="hidden card">
-      <div class="grid md:grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium">Tên hiển thị</label>
           <input id="playerName" class="mt-1 block w-full border rounded px-3 py-2" placeholder="Tên của bạn" />
+          <div id="playerNameWarn" class="text-xs text-rose-600 mt-1 hidden">Vui lòng nhập tên hiển thị để tham gia phòng.</div>
         </div>
         <div>
           <label class="block text-sm font-medium">Room ID</label>
@@ -384,13 +401,13 @@ function addQuestionUI(q){
     </div>
     <div class="mt-2 grid gap-2">
       <input class="q-text border rounded px-3 py-2" placeholder="Nhập nội dung câu hỏi (ngắn gọn, rõ ràng)" value="${escapeHtml(q?.text||'')}" />
-      <div class="grid md:grid-cols-2 gap-2">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
         <input class="q-opt-0 border rounded px-3 py-2" placeholder="Đáp án A" value="${escapeHtml(q?.options?.[0]||'')}" />
         <input class="q-opt-1 border rounded px-3 py-2" placeholder="Đáp án B" value="${escapeHtml(q?.options?.[1]||'')}" />
         <input class="q-opt-2 border rounded px-3 py-2" placeholder="Đáp án C" value="${escapeHtml(q?.options?.[2]||'')}" />
         <input class="q-opt-3 border rounded px-3 py-2" placeholder="Đáp án D" value="${escapeHtml(q?.options?.[3]||'')}" />
       </div>
-      <div class="grid md:grid-cols-2 gap-2">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
         <div>
           <label class="text-xs text-slate-500">Đáp án đúng</label>
           <select class="q-ans border rounded px-3 py-2">
@@ -658,7 +675,13 @@ function startSynchronizedCountdown(deadlineMs, durationSec){
 // ============================
 $('joinRoomBtn').addEventListener('click', ()=>{
   const rid = $('playerRoomId').value.trim();
-  const name = $('playerName').value.trim() || 'Player';
+  const name = $('playerName').value.trim();
+  if(!name){
+    $('playerNameWarn').classList.remove('hidden');
+    $('playerName').classList.add('border-rose-400');
+    alert('Nhập tên hiển thị trước khi join');
+    return;
+  }
   if(!rid){ alert('Nhập Room ID'); return; }
   leaderPeerId = rid;
   const conn = peer.connect(leaderPeerId);
@@ -675,6 +698,26 @@ $('joinRoomBtn').addEventListener('click', ()=>{
   });
   conn.on('close', ()=>{ $('playerStatus').textContent = 'Disconnected'; });
 });
+
+// Toggle Join enabled based on inputs
+function updateJoinEnabled(){
+  const name = $('playerName').value.trim();
+  const rid = $('playerRoomId').value.trim();
+  $('joinRoomBtn').disabled = !(name && rid);
+  if(name){
+    $('playerNameWarn').classList.add('hidden');
+    $('playerName').classList.remove('border-rose-400');
+  } else {
+    $('playerNameWarn').classList.remove('hidden');
+    $('playerName').classList.add('border-rose-400');
+  }
+}
+['playerName','playerRoomId'].forEach(id=>{
+  const el = $(id); if(el){ el.addEventListener('input', updateJoinEnabled); el.addEventListener('change', updateJoinEnabled); }
+});
+// Also on blur of name field, show warning if empty
+$('playerName').addEventListener('blur', updateJoinEnabled);
+updateJoinEnabled();
 
 function handleIncomingFromLeader(msg){
   if(!msg || !msg.type) return;
