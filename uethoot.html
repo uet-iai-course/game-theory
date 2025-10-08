@@ -114,7 +114,8 @@
       "text": "Câu hỏi?",
       "options": ["A...","B...","C...","D..."],
       "answerIndex": 1,
-      "durationSec": 45
+      "durationSec": 45,
+      "imageUrl": "https://example.com/image.png"
     }
   ]
 }</pre>
@@ -422,6 +423,11 @@ function addQuestionUI(q){
           <input class="q-dur border rounded px-3 py-2 w-full" type="number" min="5" max="300" placeholder="30" value="${escapeHtml(String(q?.durationSec||''))}" />
         </div>
       </div>
+      <div>
+        <label class="text-xs text-slate-500">Ảnh minh họa (URL)</label>
+        <input class="q-img border rounded px-3 py-2 w-full" placeholder="https://..." value="${escapeHtml(q?.imageUrl||'')}" />
+        <div class="text-[11px] text-slate-500 mt-1">Ảnh sẽ hiển thị ở Player và Leader nếu có URL hợp lệ.</div>
+      </div>
     </div>
   `;
   const sel = wrapper.querySelector('.q-ans'); sel.value = String(q?.answerIndex ?? 0);
@@ -437,7 +443,8 @@ function rebuildQuizFromUI(){
     const options = [0,1,2,3].map(i=> node.querySelector(`.q-opt-${i}`).value);
     const answerIndex = parseInt(node.querySelector('.q-ans').value)||0;
     const dur = parseInt(node.querySelector('.q-dur')?.value || '') || 30;
-    return { text, options, answerIndex, durationSec: dur };
+    const imageUrl = node.querySelector('.q-img')?.value?.trim() || '';
+    return { text, options, answerIndex, durationSec: dur, imageUrl };
   });
   renderLeaderBoard();
   refreshJsonEditorFromState();
@@ -450,7 +457,7 @@ $('importJSONBtn').addEventListener('click', ()=>{
   try{
     const obj = JSON.parse(s);
     if(!obj || !Array.isArray(obj.questions)) throw new Error('Sai schema');
-    quiz = { title: obj.title || 'UETHoot Quiz', questions: obj.questions.map(q=>({ text:q.text||'', options:(q.options||['','','','']).slice(0,4), answerIndex: parseInt(q.answerIndex)||0, durationSec: parseInt(q.durationSec)||30 })) };
+    quiz = { title: obj.title || 'UETHoot Quiz', questions: obj.questions.map(q=>({ text:q.text||'', options:(q.options||['','','','']).slice(0,4), answerIndex: parseInt(q.answerIndex)||0, durationSec: parseInt(q.durationSec)||30, imageUrl: q.imageUrl||'' })) };
     $('quizList').innerHTML = '';
     quiz.questions.forEach(q=> addQuestionUI(q));
     renderLeaderBoard();
@@ -487,7 +494,7 @@ quizJsonEditor.addEventListener('input', ()=>{
   try{
     const obj = JSON.parse(s);
     if(!obj || !Array.isArray(obj.questions)) throw new Error('Sai schema: thiếu questions');
-    quiz = { title: obj.title || 'UETHoot Quiz', questions: obj.questions.map(q=>({ text:q.text||'', options:(q.options||['','','','']).slice(0,4), answerIndex: parseInt(q.answerIndex)||0, durationSec: parseInt(q.durationSec)||30 })) };
+    quiz = { title: obj.title || 'UETHoot Quiz', questions: obj.questions.map(q=>({ text:q.text||'', options:(q.options||['','','','']).slice(0,4), answerIndex: parseInt(q.answerIndex)||0, durationSec: parseInt(q.durationSec)||30, imageUrl: q.imageUrl||'' })) };
     $('quizList').innerHTML = '';
     quiz.questions.forEach(q=> addQuestionUI(q));
     syncQuizTitleInput();
@@ -519,7 +526,7 @@ async function runQuizLoop(){
     currentDurationSec = durationSec;
     currentDeadlineMs = startAtMs + durationSec * 1000;
     startSynchronizedCountdown(currentDeadlineMs, durationSec);
-    broadcast({ type:'question', qIndex: i, text: quiz.questions[i].text, options: quiz.questions[i].options, total: quiz.questions.length, durationSec, startAtMs });
+    broadcast({ type:'question', qIndex: i, text: quiz.questions[i].text, options: quiz.questions[i].options, total: quiz.questions.length, durationSec, startAtMs, imageUrl: (quiz.questions[i].imageUrl||'') });
     // wait until deadline
     const waitMs = Math.max(0, currentDeadlineMs - nowMs());
     await sleep(waitMs);
@@ -607,6 +614,17 @@ function showLeaderQuestion(i){
   const area = $('leaderQuestionArea');
   area.classList.remove('hidden');
   $('leaderQText').textContent = quiz.questions[i].text || '';
+  // inject image if any
+  const existingImg = area.querySelector('.leader-q-img');
+  if(existingImg) existingImg.remove();
+  const imgUrl = quiz.questions[i].imageUrl||'';
+  if(imgUrl){
+    const img = document.createElement('img');
+    img.src = imgUrl;
+    img.alt = 'question image';
+    img.className = 'leader-q-img mt-2 max-h-48 rounded shadow-sm';
+    $('leaderQText').parentElement.appendChild(img);
+  }
   const opts = quiz.questions[i].options || [];
   const mapColor = ['optA','optB','optC','optD'];
   const cont = $('leaderQOptions'); cont.innerHTML='';
@@ -762,10 +780,19 @@ function renderPlayerLeaderboard(list){
 }
 
 function renderPlayerQuestion(payload){
-  const { qIndex, text, options, total, durationSec, startAtMs } = payload;
+  const { qIndex, text, options, total, durationSec, startAtMs, imageUrl } = payload;
   const area = $('playerQuestionArea'); area.classList.remove('hidden');
   $('playerQText').textContent = text || '';
   $('playerQIndex').textContent = `Câu ${qIndex+1}/${total}`;
+  // image
+  let img = area.querySelector('.player-q-img');
+  if(img) img.remove();
+  if(imageUrl){
+    img = document.createElement('img');
+    img.src = imageUrl; img.alt = 'question image';
+    img.className = 'player-q-img mt-2 max-h-56 rounded shadow-sm';
+    $('playerQText').parentElement.appendChild(img);
+  }
   const mapColor = ['optA','optB','optC','optD'];
   const cont = $('playerQOptions'); cont.innerHTML='';
   const deadlineMs = (startAtMs||nowMs()) + (durationSec||QUESTION_TIME_SEC)*1000;
