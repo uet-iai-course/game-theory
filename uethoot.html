@@ -724,9 +724,18 @@ function handleIncomingFromLeader(msg){
   if(msg.type === 'error'){ alert('Leader: '+msg.message); }
   if(msg.type === 'quiz-info'){ $('playerStatus').textContent = `Đang chờ bắt đầu — ${msg.total||0} câu`; }
   if(msg.type === 'leaderboard'){ renderPlayerLeaderboard(msg.data); }
+  if(msg.type === 'leaderboard'){
+    $('playerLeaderboard').classList.remove('hidden');
+  }
   if(msg.type === 'quiz-start'){
     $('playerStatus').textContent = 'Quiz bắt đầu!';
     $('playerLeaderboard').classList.remove('hidden');
+  }
+  if(msg.type === 'request-hello'){
+    const name = $('playerName').value.trim() || 'Player';
+    const conn = connections[leaderPeerId];
+    if(conn && conn.open) conn.send(JSON.stringify({type:'hello', name}));
+    $('playerStatus').textContent = 'Xác nhận tham gia...';
   }
   if(msg.type === 'question'){
     renderPlayerQuestion(msg);
